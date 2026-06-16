@@ -112,6 +112,15 @@ def ffmpeg(*args):
     run(["ffmpeg", "-y", *[str(a) for a in args]])
 
 
+def has_audio(path: str) -> bool:
+    out = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_streams", "-select_streams", "a", str(path)],
+        capture_output=True, text=True, check=True
+    ).stdout
+    return bool(json.loads(out).get("streams"))
+
+
 def get_duration(path: str) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -208,20 +217,34 @@ def main():
 
     # ── Step 6: assemble final video ──────────────────────────────────────────
     print("\n[6/7] Final Video zusammenbauen …")
-    src_duration   = get_duration(str(source))
     total_duration = args.cutpoint + outro_duration
-    fade_start     = total_duration - 0.66
+    audio_fade_st  = max(0.0, args.cutpoint - 0.03)
+
+    source_has_audio = has_audio(str(source))
+
+    if source_has_audio:
+        # Trim audio at cutpoint, 30ms fade at cut boundary, pad silence for outro
+        audio_filter = (
+            f"[0:a]atrim=0:{args.cutpoint},asetpts=PTS-STARTPTS,"
+            f"afade=t=out:st={audio_fade_st:.3f}:d=0.03,"
+            f"apad=whole_dur={total_duration}[aout]"
+        )
+        a_map   = ["-map", "[aout]"]
+        a_codec = ["-c:a", "aac", "-b:a", "192k"]
+    else:
+        audio_filter = f"aevalsrc=0:d={total_duration}[aout]"
+        a_map   = ["-map", "[aout]"]
+        a_codec = ["-c:a", "aac", "-b:a", "192k"]
 
     ffmpeg(
         "-i", source, "-i", outro_clip,
         "-filter_complex",
         f"[0:v]trim=0:{args.cutpoint},setpts=PTS-STARTPTS[mv];"
         f"[mv][1:v]concat=n=2:v=1:a=0[v];"
-        f"[0:a]apad=whole_dur={total_duration}[a];"
-        f"[a]afade=t=out:st={fade_start:.3f}:d=0.66[aout]",
-        "-map", "[v]", "-map", "[aout]",
+        + audio_filter,
+        "-map", "[v]", *a_map,
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16", "-preset", "slow", "-r", "25",
-        "-c:a", "aac", "-b:a", "192k",
+        *a_codec,
         "-t", total_duration,
         out_path
     )

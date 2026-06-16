@@ -26,7 +26,7 @@ def measure_luminance(image_path: str) -> float:
         "-show_entries", "frame_tags=lavfi.signalstats.YAVG",
         "-of", "json"
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     data = json.loads(result.stdout)
     frames = data.get("frames", [])
     if not frames:
@@ -79,7 +79,8 @@ def main():
     tmp = None
 
     if args.time is not None:
-        tmp = tempfile.mktemp(suffix=".jpg")
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+            tmp = tf.name
         extract_frame(file, args.time, tmp)
         file = tmp
 
